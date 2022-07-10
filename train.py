@@ -58,15 +58,15 @@ class AttentionBlock(hk.Module):
         out_features = inputs.shape[-1]
 
         x = hk.MultiHeadAttention(num_heads=self.num_heads, key_size=self.head_size, w_init_scale=1.0)(inputs, inputs, inputs)
-        x = hk.BatchNorm(True, True, decay_rate=0.9, eps=1e-6, scale_init=hki.Constant(1.0), offset_init=hki.Constant(1e-8), axis=(-1,))(x, is_training)
+        x = hk.BatchNorm(False, False, decay_rate=0.9, eps=1e-6)(x, is_training)
         x = hk.dropout(hk.next_rng_key(), dropout, x)
         x = layer_norm(x)
 
         x = hk.Conv1D(output_channels=self.ff_dim, kernel_shape=1, padding="same")(x)
-        x = hk.BatchNorm(True, True, decay_rate=0.9, eps=1e-6, scale_init=hki.Constant(1.0), offset_init=hki.Constant(1e-8), axis=(-1,))(x, is_training)
+        x = hk.BatchNorm(False, False, decay_rate=0.9, eps=1e-6)(x, is_training)
         x = jnn.gelu(x)
         x = hk.Conv1D(output_channels=out_features, kernel_shape=1, padding="same")(x)
-        x = hk.BatchNorm(True, True, decay_rate=0.9, eps=1e-6, scale_init=hki.Constant(1.0), offset_init=hki.Constant(1e-8), axis=(-1,))(x, is_training)
+        x = hk.BatchNorm(False, False, decay_rate=0.9, eps=1e-6)(x, is_training)
         x = hk.dropout(hk.next_rng_key(), dropout, x)
         x = jnn.gelu(x)
 
@@ -108,7 +108,7 @@ class TransformerThunk(hk.Module):
         dropout = self.dropout if is_training else 0.0
         bs = inputs.shape[0]
         time2vec = Time2Vec(kernel_size=self.time2vec_dim)
-        time_embedding = TimeDistributed(time2vec, batch_first=False)(inputs)
+        time_embedding = TimeDistributed(time2vec)(inputs)
 
         x = jnp.concatenate([inputs, time_embedding], axis=-1)
         
@@ -225,7 +225,7 @@ def load(filename='./data/train.csv', filename1='./data/test.csv', filename2 = '
 
 
 def main():
-    max_steps = 120
+    max_steps = 200
     num_heads = 4
     head_size = 128
     num_layers = 2
@@ -245,7 +245,7 @@ def main():
     print("Example y shape", y.shape)
     print("Testing Examples :::: ", x_test.shape)
 
-    rng1, rng = jr.split(jax.random.PRNGKey(111))
+    rng1, rng = jr.split(jax.random.PRNGKey(18))
     train_dataset = get_generator(x, y, rng1, batch_size, num_devices)
 
     forward_fn = build_forward_fn(num_layers, time2vec_dim, num_heads, head_size, dropout=dropout_rate)
@@ -293,7 +293,7 @@ def main():
     state_reduced = state_multi_device
     rng = rng_replicated
 
-    Ypred, _ = forward_apply(params_reduced, state_reduced, rng, jnp.expand_dims(x_test, axis=0), is_training=False)
+    Ypred, _ = forward_apply(params_reduced, state_reduced, rng, x_test, is_training=False)
     Ypred = np.array(Ypred)
     Ypred = sc.inverse_transform(Ypred[0, :, :])
 
