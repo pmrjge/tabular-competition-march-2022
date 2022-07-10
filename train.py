@@ -105,6 +105,7 @@ class TransformerThunk(hk.Module):
         self.num_layers = num_layers
 
     def __call__(self, inputs, is_training=True):
+        dropout = self.dropout if is_training else 0.0
         bs = inputs.shape[0]
         time2vec = Time2Vec(kernel_size=self.time2vec_dim)
         time_embedding = TimeDistributed(time2vec, batch_first=False)(inputs)
@@ -114,7 +115,11 @@ class TransformerThunk(hk.Module):
         w_init = hki.VarianceScaling(1.0, mode='fan_in', distribution='truncated_normal')
         for i in range(self.num_layers):
             x = AttentionBlock(num_heads=self.num_heads, head_size=self.head_size, ff_dim=self.ff_dim, dropout=self.dropout)(x, is_training)
-        x = jnp.dot(x, hk.get_parameter('wfinal', shape=(x.shape[2], 65), init=w_init)) + hk.get_parameter('biasfinal', shape=(65,), init=hki.Constant(1e-8))
+        x = jnp.dot(x, hk.get_parameter('wfinal', shape=(x.shape[2], 256), init=w_init)) + hk.get_parameter('biasfinal', shape=(256,), init=hki.Constant(1e-6))
+        x = jnn.gelu(x)
+        x = hk.dropout(hk.next_rng_key(), dropout, x)
+        x = jnp.dot(x, hk.get_parameter('wwfinal', shape=(256, 65), init=w_init)) + hk.get_parameter('bbiasfinal', shape=(65,), init=hki.Constant(1e-8))
+        
         return x[:, -36:, :]
 
 def build_forward_fn(num_layers, time2vec_dim, num_heads, head_size, ff_dim=None, dropout=0.5):
@@ -220,7 +225,7 @@ def load(filename='./data/train.csv', filename1='./data/test.csv', filename2 = '
 
 
 def main():
-    max_steps = 2100
+    max_steps = 40
     num_heads = 4
     head_size = 128
     num_layers = 2
@@ -274,12 +279,12 @@ def main():
 
     logging.info('Starting train loop ++++++++...')
     for i, (w, z) in zip(range(max_steps), train_dataset):
-        if (i + 1) % 100 == 0:
+        if (i + 1) % 1 == 0:
             logging.info(f'Step {i} computing forward-backward pass')
         num_steps_replicated, rng_replicated, params_multi_device, state_multi_device, opt_state_multi_device, metrics = \
             fn_update(num_steps_replicated, rng_replicated, params_multi_device, state_multi_device, opt_state_multi_device, w, z)
 
-        if (i + 1) % 100 == 0:
+        if (i + 1) % 1 == 0:
             logging.info(f'At step {i} the loss is {metrics}')
     
     # Test part of the model
