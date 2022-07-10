@@ -225,7 +225,7 @@ def load(filename='./data/train.csv', filename1='./data/test.csv', filename2 = '
 
 
 def main():
-    max_steps = 40
+    max_steps = 120
     num_heads = 4
     head_size = 128
     num_layers = 2
@@ -293,7 +293,7 @@ def main():
     state_reduced = state_multi_device
     rng = rng_replicated
 
-    Ypred, _ = forward_apply(params_reduced, state_reduced, rng, x_test, is_training=False)
+    Ypred, _ = forward_apply(params_reduced, state_reduced, rng, jnp.expand_dims(x_test, axis=0), is_training=False)
     Ypred = np.array(Ypred)
     Ypred = sc.inverse_transform(Ypred[0, :, :])
 
