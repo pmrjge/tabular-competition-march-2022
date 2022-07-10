@@ -105,15 +105,17 @@ class TransformerThunk(hk.Module):
         self.num_layers = num_layers
 
     def __call__(self, inputs, is_training=True):
+        bs = inputs.shape[0]
         time2vec = Time2Vec(kernel_size=self.time2vec_dim)
-        time_embedding = TimeDistributed(time2vec)(inputs)
+        time_embedding = TimeDistributed(time2vec, batch_first=False)(inputs)
 
         x = jnp.concatenate([inputs, time_embedding], axis=-1)
         
         w_init = hki.VarianceScaling(1.0, mode='fan_in', distribution='truncated_normal')
         for i in range(self.num_layers):
             x = AttentionBlock(num_heads=self.num_heads, head_size=self.head_size, ff_dim=self.ff_dim, dropout=self.dropout)(x, is_training)
-        return TimeDistributed(hk.Linear(36, w_init=w_init))(x)
+        x = jnp.dot(x, hk.get_parameter('wfinal', shape=(x.shape[2], 65), init=w_init)) + hk.get_parameter('biasfinal', shape=(65,), init=hki.Constant(1e-8))
+        return x[:, -36:, :]
 
 def build_forward_fn(num_layers, time2vec_dim, num_heads, head_size, ff_dim=None, dropout=0.5):
     def forward_fn(x: jnp.ndarray, is_training: bool = True) -> jnp.ndarray:
@@ -170,7 +172,7 @@ def get_generator(x, y, rng_key, batch_size, num_devices):
             key, k1 = jax.random.split(key)
             perm = jax.random.choice(k1, n, shape=(batch_size,))
             
-            yield x[perm, :].reshape(num_devices, kk, *x.shape[1:]), y[perm].reshape(num_devices, kk, *y.shape[1:])
+            yield x[perm, :, :].reshape(num_devices, kk, *x.shape[1:]), y[perm].reshape(num_devices, kk, *y.shape[1:])
     return batch_generator()
 
 def replicate(t, num_devices):
@@ -197,10 +199,9 @@ def load(filename='./data/train.csv', filename1='./data/test.csv', filename2 = '
     Ytrain = np.empty((1,3*12, datanorm.shape[1]-2))
 
     T = 0
-    for t in range(0, datanorm.shape[0]-lenseq, 6) :
+    for t in range(0, datanorm.shape[0]-lenseq-12*12, 6) :
         if t//1000 > T:
             T = t//1000
-            print(T)
         Xtemp = np.reshape(datanorm[t:t+lenseq,:],(1,lenseq, datanorm.shape[1]))
         Ytemp = np.reshape(datanorm[t+lenseq:t+lenseq+3*12,:datanorm.shape[1]-2],(1,3*12, datanorm.shape[1]-2))
             
@@ -226,16 +227,17 @@ def main():
     dropout_rate = 0.3
     grad_clip_value = 1.0
     learning_rate = 0.001
-    time2vec_dim = 35
+    time2vec_dim = 36
     batch_size = 512
     
     num_devices = jax.local_device_count()
 
     print("Num devices :::: ", num_devices)
 
-    x, y, x_test, test, dftest, sc = load()
+    x, y, x_test, dftest, sc = load()
 
     print("Examples :::: ", x.shape)
+    print("Example y shape", y.shape)
     print("Testing Examples :::: ", x_test.shape)
 
     rng1, rng = jr.split(jax.random.PRNGKey(111))
